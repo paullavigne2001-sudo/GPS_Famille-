@@ -1,0 +1,44 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function sameFamily(familyId) {
+      return isSignedIn() && userDoc().data.familyId == familyId;
+    }
+
+    function isParentInFamily(familyId) {
+      return sameFamily(familyId) && userDoc().data.role == 'parent';
+    }
+
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || sameFamily(resource.data.familyId));
+      allow write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    match /families/{familyId} {
+      allow read: if sameFamily(familyId);
+      allow write: if false; // création via Cloud Function uniquement
+
+      match /locations/{childUid} {
+        // Un enfant ne peut écrire QUE sa propre position.
+        allow write: if isSignedIn() && request.auth.uid == childUid && sameFamily(familyId);
+        // Toute la famille peut lire (parents ET enfant lisent la même sous-collection).
+        allow read: if sameFamily(familyId);
+      }
+
+      match /zones/{zoneId} {
+        allow read: if sameFamily(familyId);
+        allow write: if isParentInFamily(familyId);
+      }
+    }
+  }
+}
